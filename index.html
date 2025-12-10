@@ -1,4 +1,4 @@
-<!DOCTYPE html>/
+<!DOCTYPE html>
 <html dir="rtl" lang="fa">
 <head>
     <meta charset="UTF-8">
@@ -767,8 +767,8 @@
                     <button class="btn btn-success" onclick="testConnection()">
                         <i class="fas fa-wifi"></i> تست اتصال به API
                     </button>
-                    <button class="btn" onclick="syncAllDataSmart()">
-                        <i class="fas fa-sync-alt"></i> همگام‌سازی هوشمند
+                    <button class="btn" onclick="syncAllData()">
+                        <i class="fas fa-sync-alt"></i> همگام‌سازی همه داده‌ها
                     </button>
                     <button class="btn btn-warning" onclick="downloadFullBackup()">
                         <i class="fas fa-download"></i> دانلود پشتیبان کامل
@@ -790,9 +790,9 @@
                 </div>
                 
                 <div class="stat-card">
-                    <h3>رکوردهای ارسال شده</h3>
-                    <div class="stat-value" id="sentRecords">0</div>
-                    <small>به Google Sheets</small>
+                    <h3>وضعیت همگام‌سازی</h3>
+                    <div class="stat-value" id="syncStatus">--</div>
+                    <small>آخرین وضعیت</small>
                 </div>
                 
                 <div class="stat-card">
@@ -805,24 +805,24 @@
             <h3>کنترل‌های پیشرفته</h3>
             <div class="input-form">
                 <div class="actions">
-                    <button class="btn" onclick="uploadNewToSheets()">
-                        <i class="fas fa-cloud-upload-alt"></i> آپلود داده‌های جدید
+                    <button class="btn" onclick="uploadToSheets()">
+                        <i class="fas fa-cloud-upload-alt"></i> آپلود همه داده‌ها به Google Sheets
                     </button>
                     <button class="btn" onclick="downloadFromSheets()">
                         <i class="fas fa-cloud-download-alt"></i> دانلود از Google Sheets
                     </button>
-                    <button class="btn btn-danger" onclick="resetSyncStatus()">
-                        <i class="fas fa-redo"></i> ریست وضعیت همگام‌سازی
+                    <button class="btn btn-danger" onclick="clearLocalData()">
+                        <i class="fas fa-trash"></i> پاک کردن داده‌های محلی
                     </button>
                 </div>
                 
                 <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-right: 4px solid #3498db;">
                     <h4><i class="fas fa-info-circle"></i> راهنمای همگام‌سازی:</h4>
                     <ul style="margin-top: 10px; padding-right: 20px;">
-                        <li><strong>همگام‌سازی هوشمند:</strong> فقط داده‌های جدید ارسال می‌شوند</li>
-                        <li><strong>آپلود داده‌های جدید:</strong> فقط داده‌هایی که هنوز ارسال نشده‌اند</li>
-                        <li><strong>ریست وضعیت:</strong> اگر مشکل تکراری شدن داشتید</li>
-                        <li><strong>پشتیبان‌گیری:</strong> همیشه پشتیبان بگیرید</li>
+                        <li><strong>اتصال آنلاین:</strong> داده‌ها هم در مرورگر و هم در Google Sheets ذخیره می‌شوند</li>
+                        <li><strong>حالت آفلاین:</strong> اگر اینترنت قطع شود، داده‌ها در مرورگر ذخیره می‌شوند</li>
+                        <li><strong>همگام‌سازی خودکار:</strong> هر ۵ دقیقه یکبار داده‌ها همگام می‌شوند</li>
+                        <li><strong>پشتیبان‌گیری:</strong> هر روز یکبار پشتیبان کامل دانلود کنید</li>
                     </ul>
                 </div>
             </div>
@@ -854,170 +854,98 @@
         let debts = JSON.parse(localStorage.getItem('debts')) || [];
         let payments = JSON.parse(localStorage.getItem('payments')) || [];
         
-        // ==================== سیستم جلوگیری از تکراری شدن ====================
-        
-        // نگهداری رکوردهایی که قبلاً به Sheets ارسال شده‌اند
-        let sentToSheets = {
-            customers: new Set(JSON.parse(localStorage.getItem('sentCustomers')) || []),
-            debts: new Set(JSON.parse(localStorage.getItem('sentDebts')) || []),
-            payments: new Set(JSON.parse(localStorage.getItem('sentPayments')) || [])
-        };
-        
-        // ذخیره وضعیت همگام‌سازی
-        function saveSyncStatus() {
-            localStorage.setItem('sentCustomers', JSON.stringify([...sentToSheets.customers]));
-            localStorage.setItem('sentDebts', JSON.stringify([...sentToSheets.debts]));
-            localStorage.setItem('sentPayments', JSON.stringify([...sentToSheets.payments]));
-        }
-        
         // ==================== توابع اصلی ====================
         
-        // ذخیره داده‌ها در localStorage
-        function saveDataToLocal() {
+        // ذخیره داده‌ها در localStorage و Google Sheets
+        async function saveData() {
+            // ذخیره در localStorage
             localStorage.setItem('customers', JSON.stringify(customers));
             localStorage.setItem('debts', JSON.stringify(debts));
             localStorage.setItem('payments', JSON.stringify(payments));
+            
+            // ذخیره در Google Sheets (اگر آنلاین هستیم)
+            try {
+                await saveToGoogleSheets();
+                showMessage('✅ داده‌ها در Google Sheets ذخیره شدند', 'success');
+            } catch (error) {
+                showMessage('⚠ داده‌ها فقط در مرورگر ذخیره شدند', 'warning');
+            }
+            
             updateDashboardStats();
             updateSyncStats();
         }
         
-        // ذخیره در Google Sheets (فقط داده‌های جدید)
-        async function saveNewToGoogleSheets() {
+        // ذخیره در Google Sheets
+        async function saveToGoogleSheets() {
             try {
-                let sentCount = 0;
-                
-                // ارسال مشتریان جدید
+                // ارسال مشتریان
                 for (const customer of customers) {
-                    const customerId = customer.employee_code || customer.id;
-                    
-                    if (!sentToSheets.customers.has(customerId)) {
-                        await fetch(GOOGLE_SHEETS_API, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            body: JSON.stringify({
-                                action: 'add',
-                                type: 'customers',
-                                data: customer
-                            })
-                        });
-                        
-                        sentToSheets.customers.add(customerId);
-                        sentCount++;
-                    }
-                }
-                
-                // ارسال بدهی‌های جدید
-                for (const debt of debts) {
-                    const debtId = debt.id;
-                    
-                    if (!sentToSheets.debts.has(debtId)) {
-                        await fetch(GOOGLE_SHEETS_API, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            body: JSON.stringify({
-                                action: 'add',
-                                type: 'debts',
-                                data: debt
-                            })
-                        });
-                        
-                        sentToSheets.debts.add(debtId);
-                        sentCount++;
-                    }
-                }
-                
-                // ارسال پرداخت‌های جدید
-                for (const payment of payments) {
-                    const paymentId = payment.id;
-                    
-                    if (!sentToSheets.payments.has(paymentId)) {
-                        await fetch(GOOGLE_SHEETS_API, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            body: JSON.stringify({
-                                action: 'add',
-                                type: 'payments',
-                                data: payment
-                            })
-                        });
-                        
-                        sentToSheets.payments.add(paymentId);
-                        sentCount++;
-                    }
-                }
-                
-                // ذخیره وضعیت همگام‌سازی
-                saveSyncStatus();
-                localStorage.setItem('lastSync', new Date().toLocaleString('fa-IR'));
-                
-                return { success: true, sentCount };
-            } catch (error) {
-                console.error('خطا در ذخیره Google Sheets:', error);
-                return { success: false, error: error.message };
-            }
-        }
-        
-        // بارگذاری از Google Sheets (بدون تکراری شدن)
-        async function loadFromGoogleSheetsSmart(type) {
-            try {
-                const response = await fetch(`${GOOGLE_SHEETS_API}?action=getAll&type=${type}&t=${Date.now()}`);
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    if (result.success) {
-                        return result.data || [];
-                    }
-                }
-                return [];
-            } catch (error) {
-                console.log(`خطا در خواندن ${type} از Google Sheets:`, error);
-                return [];
-            }
-        }
-        
-        // تابع هوشمند برای افزودن رکورد (هم به localStorage هم به Sheets)
-        async function addRecordSmart(record, type) {
-            let recordId;
-            
-            // اضافه کردن به آرایه محلی
-            if (type === 'customers') {
-                recordId = record.employee_code;
-                customers.push(record);
-            } else if (type === 'debts') {
-                recordId = record.id;
-                debts.push(record);
-            } else if (type === 'payments') {
-                recordId = record.id;
-                payments.push(record);
-            }
-            
-            // ذخیره در localStorage
-            saveDataToLocal();
-            
-            // تلاش برای ارسال به Google Sheets
-            let onlineSaved = false;
-            if (navigator.onLine && !sentToSheets[type].has(recordId)) {
-                try {
                     await fetch(GOOGLE_SHEETS_API, {
                         method: 'POST',
                         mode: 'no-cors',
                         body: JSON.stringify({
                             action: 'add',
-                            type: type,
-                            data: record
+                            type: 'customers',
+                            data: customer
                         })
                     });
-                    
-                    sentToSheets[type].add(recordId);
-                    saveSyncStatus();
-                    localStorage.setItem('lastSync', new Date().toLocaleString('fa-IR'));
-                    onlineSaved = true;
-                } catch (error) {
-                    console.log(`ذخیره ${type} آنلاین ناموفق بود`);
                 }
+                
+                // ارسال بدهی‌ها
+                for (const debt of debts) {
+                    await fetch(GOOGLE_SHEETS_API, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'add',
+                            type: 'debts',
+                            data: debt
+                        })
+                    });
+                }
+                
+                // ارسال پرداخت‌ها
+                for (const payment of payments) {
+                    await fetch(GOOGLE_SHEETS_API, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'add',
+                            type: 'payments',
+                            data: payment
+                        })
+                    });
+                }
+                
+                localStorage.setItem('lastSync', new Date().toLocaleString('fa-IR'));
+                return true;
+            } catch (error) {
+                console.error('خطا در ذخیره Google Sheets:', error);
+                return false;
             }
-            
-            return { localSaved: true, onlineSaved };
+        }
+        
+        // بارگذاری از Google Sheets
+        async function loadFromGoogleSheets(type) {
+            try {
+                // ساخت یک درخواست ساده برای تست
+                const timestamp = new Date().getTime();
+                const response = await fetch(`${GOOGLE_SHEETS_API}?action=getAll&type=${type}&_=${timestamp}`);
+                
+                if (!response.ok) {
+                    throw new Error('پاسخ سرور معتبر نیست');
+                }
+                
+                const result = await response.json();
+                if (result.success) {
+                    return result.data || [];
+                } else {
+                    throw new Error(result.error || 'خطای ناشناخته');
+                }
+            } catch (error) {
+                console.log(`خطا در خواندن ${type} از Google Sheets:`, error);
+                return [];
+            }
         }
         
         // بارگذاری اولیه
@@ -1053,6 +981,13 @@
                     loadCustomers();
                 }
             });
+            
+            // همگام‌سازی خودکار هر ۵ دقیقه
+            setInterval(async () => {
+                if (navigator.onLine) {
+                    await syncAllData();
+                }
+            }, 5 * 60 * 1000); // ۵ دقیقه
         });
         
         // ==================== مدیریت تب‌ها ====================
@@ -1137,8 +1072,30 @@
                 created_at: new Date().toISOString()
             };
             
-            // استفاده از تابع هوشمند برای افزودن
-            const result = await addRecordSmart(newCustomer, 'customers');
+            // اضافه کردن به آرایه محلی
+            customers.push(newCustomer);
+            
+            // ذخیره در localStorage
+            localStorage.setItem('customers', JSON.stringify(customers));
+            
+            // تلاش برای ذخیره در Google Sheets
+            let onlineSaved = false;
+            if (navigator.onLine) {
+                try {
+                    await fetch(GOOGLE_SHEETS_API, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'add',
+                            type: 'customers',
+                            data: newCustomer
+                        })
+                    });
+                    onlineSaved = true;
+                } catch (error) {
+                    console.log('ذخیره آنلاین ناموفق بود');
+                }
+            }
             
             // بارگذاری مجدد و نمایش پیغام
             loadCustomers();
@@ -1152,7 +1109,7 @@
             document.getElementById('nationalCode').value = '';
             document.getElementById('hireDate').value = moment().format('jYYYY/jMM/jDD');
             
-            if (result.onlineSaved) {
+            if (onlineSaved) {
                 showMessage('✅ مشتری با موفقیت اضافه شد (آنلاین + آفلاین)', 'success');
             } else {
                 showMessage('⚠ مشتری به صورت آفلاین ذخیره شد (در اولین فرصت آنلاین همگام می‌شود)', 'warning');
@@ -1167,20 +1124,15 @@
             // حذف از آرایه محلی
             customers = customers.filter(c => (c.employee_code || c.id) !== id);
             
-            // حذف از لیست ارسال شده‌ها
-            sentToSheets.customers.delete(id);
-            
             // حذف بدهی‌ها و پرداخت‌های مربوطه
             const customerDebts = debts.filter(d => d.employee_code === id);
             customerDebts.forEach(debt => {
                 payments = payments.filter(p => p.debt_id !== debt.id);
-                sentToSheets.debts.delete(debt.id);
             });
             debts = debts.filter(d => d.employee_code !== id);
             
             // ذخیره تغییرات
-            saveDataToLocal();
-            saveSyncStatus();
+            saveData();
             
             // بارگذاری مجدد
             loadCustomers();
@@ -1241,12 +1193,8 @@
             customers = [];
             debts = [];
             payments = [];
-            sentToSheets.customers.clear();
-            sentToSheets.debts.clear();
-            sentToSheets.payments.clear();
             
-            saveDataToLocal();
-            saveSyncStatus();
+            await saveData();
             
             loadCustomers();
             loadDebts();
@@ -1262,37 +1210,30 @@
             
             try {
                 // خواندن از Google Sheets
-                const onlineCustomers = await loadFromGoogleSheetsSmart('customers');
+                const onlineCustomers = await loadFromGoogleSheets('customers');
                 
                 if (onlineCustomers.length > 0) {
-                    let addedCount = 0;
+                    // ادغام داده‌ها
+                    const merged = [...customers];
                     
-                    // اضافه کردن فقط مشتریان جدید
                     onlineCustomers.forEach(online => {
-                        const customerId = online.employee_code || online.id;
-                        const exists = customers.some(local => 
-                            (local.employee_code || local.id) === customerId
+                        const exists = merged.some(local => 
+                            (local.employee_code || local.id) === (online.employee_code || online.id)
                         );
                         
                         if (!exists) {
-                            customers.push(online);
-                            // علامت گذاری که از Sheets آمده (نیازی به ارسال مجدد نیست)
-                            sentToSheets.customers.add(customerId);
-                            addedCount++;
+                            merged.push(online);
                         }
                     });
                     
+                    customers = merged;
+                    
                     // ذخیره
-                    saveDataToLocal();
-                    saveSyncStatus();
+                    localStorage.setItem('customers', JSON.stringify(customers));
                     loadCustomers();
                     updateSyncStats();
                     
-                    if (addedCount > 0) {
-                        showMessage(`✅ ${addedCount} مشتری جدید از Google Sheets اضافه شد`, 'success');
-                    } else {
-                        showMessage('هیچ مشتری جدیدی در Google Sheets یافت نشد', 'info');
-                    }
+                    showMessage(`✅ ${onlineCustomers.length} مشتری از Google Sheets همگام شد`, 'success');
                 } else {
                     showMessage('هیچ مشتری در Google Sheets یافت نشد', 'info');
                 }
@@ -1408,8 +1349,30 @@
                 created_at: new Date().toISOString()
             };
             
-            // استفاده از تابع هوشمند برای افزودن
-            const result = await addRecordSmart(newDebt, 'debts');
+            // اضافه کردن به آرایه محلی
+            debts.push(newDebt);
+            
+            // ذخیره در localStorage
+            localStorage.setItem('debts', JSON.stringify(debts));
+            
+            // تلاش برای ذخیره در Google Sheets
+            let onlineSaved = false;
+            if (navigator.onLine) {
+                try {
+                    await fetch(GOOGLE_SHEETS_API, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'add',
+                            type: 'debts',
+                            data: newDebt
+                        })
+                    });
+                    onlineSaved = true;
+                } catch (error) {
+                    console.log('ذخیره آنلاین ناموفق بود');
+                }
+            }
             
             // بارگذاری مجدد
             loadDebts();
@@ -1423,7 +1386,7 @@
             document.getElementById('installmentAmount').value = '';
             document.getElementById('debtDate').value = moment().format('jYYYY/jMM/jDD');
             
-            if (result.onlineSaved) {
+            if (onlineSaved) {
                 showMessage('✅ بدهی با موفقیت ثبت شد (آنلاین + آفلاین)', 'success');
             } else {
                 showMessage('⚠ بدهی به صورت آفلاین ثبت شد (در اولین فرصت آنلاین همگام می‌شود)', 'warning');
@@ -1436,11 +1399,9 @@
             }
             
             debts = debts.filter(d => d.id !== id);
-            sentToSheets.debts.delete(id);
             payments = payments.filter(p => p.debt_id !== id);
             
-            saveDataToLocal();
-            saveSyncStatus();
+            await saveData();
             
             loadDebts();
             loadPayments();
@@ -1567,14 +1528,11 @@
                 return;
             }
             
-            // بررسی اینکه آیا این پرداخت خاص قبلاً ثبت شده
             const existingPayment = payments.find(p => p.debt_id === debtId && p.installment_number === installmentNumber);
             if (existingPayment) {
                 if (!confirm(`قسط شماره ${installmentNumber} قبلاً ثبت شده است. آیا می‌خواهید آن را بازنویسی کنید؟`)) {
                     return;
                 }
-                // حذف پرداخت قبلی از لیست ارسال شده‌ها
-                sentToSheets.payments.delete(existingPayment.id);
                 payments = payments.filter(p => !(p.debt_id === debtId && p.installment_number === installmentNumber));
             }
             
@@ -1594,8 +1552,27 @@
                 created_at: new Date().toISOString()
             };
             
-            // استفاده از تابع هوشمند برای افزودن
-            const result = await addRecordSmart(newPayment, 'payments');
+            payments.push(newPayment);
+            
+            localStorage.setItem('payments', JSON.stringify(payments));
+            
+            let onlineSaved = false;
+            if (navigator.onLine) {
+                try {
+                    await fetch(GOOGLE_SHEETS_API, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'add',
+                            type: 'payments',
+                            data: newPayment
+                        })
+                    });
+                    onlineSaved = true;
+                } catch (error) {
+                    console.log('ذخیره آنلاین ناموفق بود');
+                }
+            }
             
             loadPayments();
             loadDebts();
@@ -1611,7 +1588,7 @@
             document.getElementById('paymentDate').value = moment().format('jYYYY/jMM/jDD');
             document.getElementById('paymentDescription').value = '';
             
-            if (result.onlineSaved) {
+            if (onlineSaved) {
                 showMessage('✅ پرداخت با موفقیت ثبت شد (آنلاین + آفلاین)', 'success');
             } else {
                 showMessage('⚠ پرداخت به صورت آفلاین ثبت شد (در اولین فرصت آنلاین همگام می‌شود)', 'warning');
@@ -1624,10 +1601,7 @@
             }
             
             payments = payments.filter(p => p.id !== id);
-            sentToSheets.payments.delete(id);
-            
-            saveDataToLocal();
-            saveSyncStatus();
+            await saveData();
             
             loadPayments();
             loadDebts();
@@ -1801,81 +1775,75 @@
             }
         }
         
-        // همگام‌سازی هوشمند
-        async function syncAllDataSmart() {
-            showMessage('🔄 در حال همگام‌سازی هوشمند...', 'info');
+        async function syncAllData() {
+            showMessage('🔄 در حال همگام‌سازی همه داده‌ها با Google Sheets...', 'info');
             
             try {
-                // 1. آپلود داده‌های جدید به Sheets
-                const uploadResult = await saveNewToGoogleSheets();
-                
-                // 2. دانلود از Sheets
+                // خواندن همه داده‌ها از Google Sheets
                 const [onlineCustomers, onlineDebts, onlinePayments] = await Promise.all([
-                    loadFromGoogleSheetsSmart('customers'),
-                    loadFromGoogleSheetsSmart('debts'),
-                    loadFromGoogleSheetsSmart('payments')
+                    loadFromGoogleSheets('customers'),
+                    loadFromGoogleSheets('debts'),
+                    loadFromGoogleSheets('payments')
                 ]);
                 
-                let addedCount = 0;
+                // ادغام مشتریان
+                if (onlineCustomers.length > 0) {
+                    const mergedCustomers = [...customers];
+                    onlineCustomers.forEach(online => {
+                        const exists = mergedCustomers.some(local => 
+                            (local.employee_code || local.id) === (online.employee_code || online.id)
+                        );
+                        if (!exists) {
+                            mergedCustomers.push(online);
+                        }
+                    });
+                    customers = mergedCustomers;
+                }
                 
-                // اضافه کردن مشتریان جدید
-                onlineCustomers.forEach(online => {
-                    const customerId = online.employee_code || online.id;
-                    const exists = customers.some(local => 
-                        (local.employee_code || local.id) === customerId
-                    );
-                    
-                    if (!exists) {
-                        customers.push(online);
-                        sentToSheets.customers.add(customerId);
-                        addedCount++;
-                    }
-                });
+                // ادغام بدهی‌ها
+                if (onlineDebts.length > 0) {
+                    const mergedDebts = [...debts];
+                    onlineDebts.forEach(online => {
+                        const exists = mergedDebts.some(local => local.id === online.id);
+                        if (!exists) {
+                            mergedDebts.push(online);
+                        }
+                    });
+                    debts = mergedDebts;
+                }
                 
-                // اضافه کردن بدهی‌های جدید
-                onlineDebts.forEach(online => {
-                    const exists = debts.some(local => local.id === online.id);
-                    
-                    if (!exists) {
-                        debts.push(online);
-                        sentToSheets.debts.add(online.id);
-                        addedCount++;
-                    }
-                });
+                // ادغام پرداخت‌ها
+                if (onlinePayments.length > 0) {
+                    const mergedPayments = [...payments];
+                    onlinePayments.forEach(online => {
+                        const exists = mergedPayments.some(local => local.id === online.id);
+                        if (!exists) {
+                            mergedPayments.push(online);
+                        }
+                    });
+                    payments = mergedPayments;
+                }
                 
-                // اضافه کردن پرداخت‌های جدید
-                onlinePayments.forEach(online => {
-                    const exists = payments.some(local => local.id === online.id);
-                    
-                    if (!exists) {
-                        payments.push(online);
-                        sentToSheets.payments.add(online.id);
-                        addedCount++;
-                    }
-                });
+                // ذخیره داده‌های ادغام شده
+                localStorage.setItem('customers', JSON.stringify(customers));
+                localStorage.setItem('debts', JSON.stringify(debts));
+                localStorage.setItem('payments', JSON.stringify(payments));
                 
-                // ذخیره همه تغییرات
-                saveDataToLocal();
-                saveSyncStatus();
+                // ذخیره زمان آخرین همگام‌سازی
+                localStorage.setItem('lastSync', new Date().toLocaleString('fa-IR'));
                 
-                // آپدیت نمایش
+                // بارگذاری مجدد
                 loadCustomers();
                 loadDebts();
                 loadPayments();
                 updateDashboardStats();
                 updateSyncStats();
                 
-                const totalSent = uploadResult.sentCount || 0;
-                
-                if (totalSent > 0 || addedCount > 0) {
-                    showMessage(`✅ همگام‌سازی کامل: ${totalSent} رکورد ارسال شد، ${addedCount} رکورد دریافت شد`, 'success');
-                } else {
-                    showMessage('✅ همه داده‌ها همگام هستند - هیچ تغییر جدیدی وجود نداشت', 'success');
-                }
+                showMessage(`✅ همگام‌سازی کامل انجام شد. ${onlineCustomers.length} مشتری، ${onlineDebts.length} بدهی، ${onlinePayments.length} پرداخت`, 'success');
                 
                 return true;
             } catch (error) {
-                showMessage('❌ خطا در همگام‌سازی هوشمند', 'error');
+                showMessage('❌ خطا در همگام‌سازی کامل داده‌ها', 'error');
                 return false;
             }
         }
@@ -1884,10 +1852,6 @@
             // آمار داده‌های محلی
             document.getElementById('localCustomers').textContent = customers.length;
             
-            // آمار رکوردهای ارسال شده
-            const totalSent = sentToSheets.customers.size + sentToSheets.debts.size + sentToSheets.payments.size;
-            document.getElementById('sentRecords').textContent = totalSent;
-            
             // آمار حجم داده
             const customersSize = JSON.stringify(customers).length;
             const debtsSize = JSON.stringify(debts).length;
@@ -1895,9 +1859,6 @@
             const totalSize = customersSize + debtsSize + paymentsSize;
             const totalSizeKB = (totalSize / 1024).toFixed(2);
             document.getElementById('dataSize').textContent = `${totalSizeKB} KB`;
-            
-            // آمار آنلاین (تخمینی)
-            document.getElementById('onlineCustomers').textContent = sentToSheets.customers.size;
             
             // وضعیت همگام‌سازی
             const lastSync = localStorage.getItem('lastSync');
@@ -1919,19 +1880,18 @@
             }
         }
         
-        // آپلود فقط داده‌های جدید
-        async function uploadNewToSheets() {
-            showMessage('🔼 در حال آپلود داده‌های جدید به Google Sheets...', 'info');
+        async function uploadToSheets() {
+            if (!confirm('آیا می‌خواهید همه داده‌های محلی را به Google Sheets آپلود کنید؟')) {
+                return;
+            }
+            
+            showMessage('🔼 در حال آپلود همه داده‌ها به Google Sheets...', 'info');
             
             try {
-                const result = await saveNewToGoogleSheets();
+                const success = await saveToGoogleSheets();
                 
-                if (result.success) {
-                    if (result.sentCount > 0) {
-                        showMessage(`✅ ${result.sentCount} رکورد جدید به Google Sheets آپلود شد`, 'success');
-                    } else {
-                        showMessage('✅ همه داده‌ها قبلاً آپلود شده بودند', 'info');
-                    }
+                if (success) {
+                    showMessage('✅ همه داده‌ها با موفقیت به Google Sheets آپلود شدند', 'success');
                     localStorage.setItem('lastSync', new Date().toLocaleString('fa-IR'));
                     updateSyncStats();
                 } else {
@@ -1943,80 +1903,40 @@
         }
         
         async function downloadFromSheets() {
-            if (!confirm('آیا می‌خواهید همه داده‌ها را از Google Sheets دانلود کنید؟ داده‌های تکراری اضافه نمی‌شوند.')) {
+            if (!confirm('آیا می‌خواهید همه داده‌ها را از Google Sheets دانلود کنید؟ داده‌های محلی فعلی جایگزین می‌شوند.')) {
                 return;
             }
             
-            showMessage('🔽 در حال دانلود از Google Sheets...', 'info');
+            showMessage('🔽 در حال دانلود همه داده‌ها از Google Sheets...', 'info');
             
             try {
-                const [onlineCustomers, onlineDebts, onlinePayments] = await Promise.all([
-                    loadFromGoogleSheetsSmart('customers'),
-                    loadFromGoogleSheetsSmart('debts'),
-                    loadFromGoogleSheetsSmart('payments')
-                ]);
-                
-                let addedCount = 0;
-                
-                // اضافه کردن فقط داده‌های جدید
-                onlineCustomers.forEach(online => {
-                    const customerId = online.employee_code || online.id;
-                    if (!customers.some(c => (c.employee_code || c.id) === customerId)) {
-                        customers.push(online);
-                        sentToSheets.customers.add(customerId);
-                        addedCount++;
-                    }
-                });
-                
-                onlineDebts.forEach(online => {
-                    if (!debts.some(d => d.id === online.id)) {
-                        debts.push(online);
-                        sentToSheets.debts.add(online.id);
-                        addedCount++;
-                    }
-                });
-                
-                onlinePayments.forEach(online => {
-                    if (!payments.some(p => p.id === online.id)) {
-                        payments.push(online);
-                        sentToSheets.payments.add(online.id);
-                        addedCount++;
-                    }
-                });
-                
-                saveDataToLocal();
-                saveSyncStatus();
-                
-                loadCustomers();
-                loadDebts();
-                loadPayments();
-                updateDashboardStats();
-                updateSyncStats();
-                
-                if (addedCount > 0) {
-                    showMessage(`✅ ${addedCount} رکورد جدید از Google Sheets دانلود شد`, 'success');
-                } else {
-                    showMessage('✅ همه داده‌ها قبلاً دانلود شده بودند', 'info');
-                }
+                await syncAllData();
             } catch (error) {
-                showMessage('❌ خطا در دانلود از Google Sheets', 'error');
+                showMessage('❌ خطا در دانلود داده‌ها از Google Sheets', 'error');
             }
         }
         
-        // ریست وضعیت همگام‌سازی
-        function resetSyncStatus() {
-            if (!confirm('آیا مطمئن هستید می‌خواهید وضعیت همگام‌سازی را ریست کنید؟ این کار باعث می‌شود دفعه بعد همه داده‌ها دوباره ارسال شوند.')) {
+        function clearLocalData() {
+            if (!confirm('آیا مطمئن هستید می‌خواهید همه داده‌های محلی را پاک کنید؟ این عمل قابل برگشت نیست.')) {
                 return;
             }
             
-            sentToSheets.customers.clear();
-            sentToSheets.debts.clear();
-            sentToSheets.payments.clear();
+            localStorage.removeItem('customers');
+            localStorage.removeItem('debts');
+            localStorage.removeItem('payments');
+            localStorage.removeItem('lastSync');
             
-            saveSyncStatus();
+            customers = [];
+            debts = [];
+            payments = [];
+            
+            loadCustomers();
+            loadDebts();
+            loadPayments();
+            updateDashboardStats();
             updateSyncStats();
             
-            showMessage('✅ وضعیت همگام‌سازی ریست شد. در همگام‌سازی بعدی، داده‌های جدید شناسایی و ارسال می‌شوند.', 'success');
+            showMessage('✅ همه داده‌های محلی پاک شدند', 'success');
         }
         
         function downloadFullBackup() {
@@ -2024,9 +1944,6 @@
                 customers: customers,
                 debts: debts,
                 payments: payments,
-                sentCustomers: [...sentToSheets.customers],
-                sentDebts: [...sentToSheets.debts],
-                sentPayments: [...sentToSheets.payments],
                 lastSync: localStorage.getItem('lastSync'),
                 backupDate: new Date().toLocaleString('fa-IR'),
                 totalRecords: customers.length + debts.length + payments.length
@@ -2243,21 +2160,14 @@
                             debts = backup.debts || [];
                             payments = backup.payments || [];
                             
-                            // ریست وضعیت همگام‌سازی بعد از بازیابی
-                            sentToSheets.customers.clear();
-                            sentToSheets.debts.clear();
-                            sentToSheets.payments.clear();
-                            
-                            saveDataToLocal();
-                            saveSyncStatus();
-                            
+                            saveData();
                             loadCustomers();
                             loadDebts();
                             loadPayments();
                             updateDashboardStats();
                             updateSyncStats();
                             
-                            showMessage('داده‌ها با موفقیت بازیابی شدند. وضعیت همگام‌سازی ریست شد.', 'success');
+                            showMessage('داده‌ها با موفقیت بازیابی شدند', 'success');
                         }
                     } catch (error) {
                         showMessage('خطا در خواندن فایل پشتیبان: ' + error.message, 'error');
